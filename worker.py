@@ -1,4 +1,5 @@
 import pymongo
+
 import time
 import logging
 import asyncio
@@ -9,14 +10,15 @@ from aiogram.types import ParseMode
 
 from aiogram.contrib.fsm_storage.memory import MemoryStorage
 from aiogram.dispatcher import FSMContext
+from datetime import datetime
 
-global current_ID_TASK
-current_ID_TASK = ''
+import service
 
-start_message = 'Привет! Бот для фиксирования времени выполнения задач'
-help = 'Комманды:\n\n \
-      /enter_new_task - ввести новую задачу \n \
-      /out_all_active_tasks - вывод всех активных задач \n  \
+
+start_message = 'Привет! Бот для фиксирования времени выполнения задач джира'
+help = 'Комманды:\n\n\
+      /enter_new_task - ввести новую задачу\n\
+      /out_all_active_tasks - вывод всех активных задач\n\
       /enter_time - ввести значение времени задачи'
 
 start_couting = 'start_couting'
@@ -31,80 +33,136 @@ MESSAGES = {
     'start_couting': start_couting
 }
 
-# States
+# States Enter Task
 class FormEnterTask (StatesGroup):
-    ID_TASK = State()    
+    TASK_ID = State()    
     DESCRIBE = State()
 
+# States Enter Time Task
+class FormEnterTime (StatesGroup):
+    TASK_ID = State()
+
+    
 storage = MemoryStorage()
 dp = Dispatcher(bot, storage=storage)
 
-
 # Create the client
 client = pymongo.MongoClient('localhost', 27017)
-db = client['TimerDB']
-setter_collection = db['setter']
+database = client['TASK_MANAGER_DB']
 
-@dp.message_handler(commands=['enter_new_tasks'])
-async def process_help_command(message: types.Message):
-    await message.reply('Введите ID задачи = ')
 
 @dp.message_handler(commands=['start'])
 async def start_handler(message: types.Message):
-
     print(f'{message.from_user.id} {message.from_user.full_name} {time.asctime()}')
-    
     await message.reply(MESSAGES['help'])
 
+@dp.message_handler(commands=['enter_time'])
+async def process_enter_time_command(message: types.Message,state: FSMContext):
+    await FormEnterTime.TASK_ID.set()
+    await message.reply('Введите ID задачи = ')
+
+#Обработка ввода времени джира
+@dp.message_handler(state=FormEnterTime.TASK_ID)
+async def process_TIME_TASK(message: types.Message, state: FSMContext):
+    async with state.proxy() as data:
+        data['TASK_ID'] = message.text
+    
+    await bot.send_message(message.from_user.id,'Блядская давалка = ' + data['TASK_ID'] )
+    
+    datestr = str(datetime.now())[0:19]
+    print('data[TASK_ID]: ' + data['TASK_ID'])
+
+
+
+    database['TASK_LIST'].update_one({ 'TASK_ID': data['TASK_ID']},
+                                  {'$push': { "TIME_ARRAY":  datetime.strptime(datestr, "%Y-%m-%d %H:%M:%S")}}) 
+
+    #result = database['TASK_LIST'].find({ 'TASK_ID': data['TASK_ID']})
+
+    # buf_cursor = result.clone()
+    # list_result = list(buf_cursor)
+
+    all_task_time = 0.0
+    all_task_time = service.calculate_value_in_TIME_ARRAY(data['TASK_ID'])
+
+
+    await bot.send_message(message.from_user.id,'Всего часов затрачено на задачу ('+ data['TASK_ID']+'): ' +  str(all_task_time))
+
+
+
+    # db['TASK_LIST'].update({'TASK_ID':data['TASK_ID']},
+    #                        {$set :{token :12345});
+
+    await state.finish()
 
 @dp.message_handler(commands='enter_new_task')
 async def enter_new_task_process(message: types.Message):
-   
-    await FormEnterTask.ID_TASK.set()
-    await message.reply("Введите ID_TASK:")
+    await FormEnterTask.TASK_ID.set()
+    await message.reply("Введите TASK_ID:")
 
 
 #Обработка ввода ID задачи из джира
-@dp.message_handler(state=FormEnterTask.ID_TASK)
-async def process_ID_TASK(message: types.Message, state: FSMContext):
-    
+@dp.message_handler(state=FormEnterTask.TASK_ID)
+async def process_TASK_ID(message: types.Message, state: FSMContext):
     async with state.proxy() as data:
-        data['ID_TASK'] = message.text
-        
+        data['TASK_ID'] = message.text
+
     await FormEnterTask.next()
     await message.reply("Введите описание задачи:")
-
+    
 
 
 @dp.message_handler(state=FormEnterTask.DESCRIBE)
 async def process_DESCRIBE(message: types.Message, state: FSMContext):
-    print("process_DESCRIBE_1")
     async with state.proxy() as data:
         data['DESCRIBE'] = message.text
 
-        # Remove keyboard
-        #markup = types.ReplyKeyboardRemove()
-
-        # And send message
         await bot.send_message(
             message.chat.id,
             md.text(
-                md.text('TASK_ID,', md.bold(data['ID_TASK'])),
+                md.text('TASK_ID,', md.bold(data['TASK_ID'])),
                 md.text('DESCRIBE:', md.code(data['DESCRIBE'])),
                 sep='\n'
             )
         )
 
-    # Finish conversation
+        datestr = str(datetime.now())[0:19]
+        print("datestr: " + datestr)
+        
+        obj = { 
+                'TASK_ID':  data['TASK_ID'],
+                'DESCRIBE': data['DESCRIBE'],
+                'TIME_ARRAY': [datetime.strptime(datestr, "%Y-%m-%d %H:%M:%S")]
+              }
+
+        print ('obj: ' + str(obj))
+
+        database['TASK_LIST'].insert_one(obj)
+
     await state.finish()
 
+@dp.message_handler(commands=['out_all_active_tasks'])
+async def process_out_active_tasks_command(message: types.Message):
+    
+    textMessage = ''
+    result = database['TASK_LIST'].find({
+        'TIME_ARRAY': [0]})
+    
+    buf_cursor = result.clone()
+
+    list_result = list(buf_cursor)
+    print(list_result)
+    
+    counter = 0
+    for _item in list_result:
+        textMessage = textMessage +"\n"+ _item['TASK_ID']+ "  :  " + str(_item['DESCRIBE'])
+        counter = counter + 1
+
+    await message.reply('В работе на данный момент находяться следущие задачи: \n' + textMessage + '\n\n Всего: ' + str(counter))
 
 @dp.message_handler(commands=['help'])
 async def process_help_command(message: types.Message):
-    await message.reply(MESSAGES['start_couting'])
-
-
-
+    await message.reply(MESSAGES['help'])
 
 
 # @dp.message_handler()
