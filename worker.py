@@ -66,33 +66,18 @@ async def process_enter_time_command(message: types.Message,state: FSMContext):
 async def process_TIME_TASK(message: types.Message, state: FSMContext):
     async with state.proxy() as data:
         data['TASK_ID'] = message.text
-    
-    await bot.send_message(message.from_user.id,'Блядская давалка = ' + data['TASK_ID'] )
-    
+        
     datestr = str(datetime.now())[0:19]
     print('data[TASK_ID]: ' + data['TASK_ID'])
-
-
 
     database['TASK_LIST'].update_one({ 'TASK_ID': data['TASK_ID']},
                                   {'$push': { "TIME_ARRAY":  datetime.strptime(datestr, "%Y-%m-%d %H:%M:%S")}}) 
 
-    #result = database['TASK_LIST'].find({ 'TASK_ID': data['TASK_ID']})
-
-    # buf_cursor = result.clone()
-    # list_result = list(buf_cursor)
 
     all_task_time = 0.0
     all_task_time = service.calculate_value_in_TIME_ARRAY(data['TASK_ID'])
 
-
-    await bot.send_message(message.from_user.id,'Всего часов затрачено на задачу ('+ data['TASK_ID']+'): ' +  str(all_task_time))
-
-
-
-    # db['TASK_LIST'].update({'TASK_ID':data['TASK_ID']},
-    #                        {$set :{token :12345});
-
+    await bot.send_message(message.from_user.id,'Всего часов затрачено на задачу ('+ data['TASK_ID']+'): ' +  str(all_task_time/60/60))
     await state.finish()
 
 @dp.message_handler(commands='enter_new_task')
@@ -135,8 +120,6 @@ async def process_DESCRIBE(message: types.Message, state: FSMContext):
                 'TIME_ARRAY': [datetime.strptime(datestr, "%Y-%m-%d %H:%M:%S")]
               }
 
-        print ('obj: ' + str(obj))
-
         database['TASK_LIST'].insert_one(obj)
 
     await state.finish()
@@ -163,12 +146,6 @@ async def process_out_active_tasks_command(message: types.Message):
 @dp.message_handler(commands=['help'])
 async def process_help_command(message: types.Message):
     await message.reply(MESSAGES['help'])
-
-
-# @dp.message_handler()
-# async def echo_message(msg: types.Message):
-#     await bot.send_message(msg.from_user.id,'Блядская давалка')
-
 
 if __name__ == "__main__":
     executor.start_polling(dp)
